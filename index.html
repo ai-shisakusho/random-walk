@@ -109,6 +109,35 @@
       margin-bottom: 14px;
     }
 
+    .trip-mode {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .trip-btn {
+      min-height: 46px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      color: var(--text);
+      font-weight: 800;
+      cursor: pointer;
+      transition: background .12s ease, color .12s ease, transform .12s ease;
+    }
+
+    .trip-btn[aria-pressed="true"] {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .trip-btn:active {
+      transform: scale(.985);
+    }
+
     .step-btn {
       min-height: 48px;
       padding: 12px 6px;
@@ -353,6 +382,13 @@
     <section class="card" aria-labelledby="step-title">
       <span id="step-title" class="label">今日どのくらい歩く？</span>
 
+      <span class="label">歩数の考え方</span>
+      <div class="trip-mode" role="group" aria-label="片道または往復">
+        <button class="trip-btn" data-mode="roundtrip" aria-pressed="true">↔ 往復</button>
+        <button class="trip-btn" data-mode="oneway" aria-pressed="false">→ 片道</button>
+      </div>
+
+      <span class="label">歩きたい歩数</span>
       <div class="step-grid" role="group" aria-label="歩きたい歩数">
         <button class="step-btn" data-steps="2000" aria-pressed="false">2,000歩</button>
         <button class="step-btn" data-steps="5000" aria-pressed="true">5,000歩</button>
@@ -381,7 +417,7 @@
       <p id="estimate" class="estimate"></p>
 
       <p class="note">
-        ※ 歩幅を約70cmとして概算します。目的地は「往復で指定歩数に近づく」よう、直線距離から探します。
+        ※ 歩幅を約70cmとして概算します。「往復」は行って帰る合計歩数、「片道」は目的地までの歩数として探します。
       </p>
 
       <button id="drawBtn" class="primary-btn">🎲 散歩先を決める</button>
@@ -407,7 +443,7 @@
           href="#"
           target="_blank"
           rel="noopener noreferrer"
-        >🗺️ Google Mapsで詳細・ルートを見る</a>
+        >🗺️ Google Mapsで見る</a>
 
         <button id="retryBtn" class="secondary-btn">↻ 引き直す</button>
       </div>
@@ -425,6 +461,7 @@
     const MIN_STEPS = 500;
     const MAX_STEPS = 30000;
 
+    const tripButtons = [...document.querySelectorAll(".trip-btn")];
     const stepButtons = [...document.querySelectorAll(".step-btn")];
     const stepInput = document.getElementById("stepInput");
     const estimateEl = document.getElementById("estimate");
@@ -439,6 +476,7 @@
     const mapsLink = document.getElementById("mapsLink");
 
     let selectedSteps = 5000;
+    let tripMode = "roundtrip";
     let currentPosition = null;
     let lastPickedKey = null;
 
@@ -446,6 +484,19 @@
       "https://overpass-api.de/api/interpreter",
       "https://overpass.kumi.systems/api/interpreter"
     ];
+
+    tripButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        tripMode = btn.dataset.mode;
+        tripButtons.forEach((button) => {
+          button.setAttribute(
+            "aria-pressed",
+            button === btn ? "true" : "false"
+          );
+        });
+        updateEstimate();
+      });
+    });
 
     stepButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -491,13 +542,20 @@
     }
 
     function calculateWalkingPlan(steps) {
-      const totalWalkingMeters = steps * STEP_LENGTH_METERS;
-      const oneWayRouteMeters = totalWalkingMeters / 2;
+      const enteredWalkingMeters = steps * STEP_LENGTH_METERS;
+
+      // 往復モード: 入力歩数 = 往復合計
+      // 片道モード: 入力歩数 = 目的地までの片道
+      const oneWayRouteMeters =
+        tripMode === "roundtrip"
+          ? enteredWalkingMeters / 2
+          : enteredWalkingMeters;
+
       const targetStraightMeters = oneWayRouteMeters / ROUTE_FACTOR;
 
       return {
         steps,
-        totalWalkingMeters,
+        enteredWalkingMeters,
         oneWayRouteMeters,
         targetStraightMeters
       };
@@ -507,14 +565,16 @@
       const steps = normalizeSteps(stepInput.value || selectedSteps);
       const plan = calculateWalkingPlan(steps);
 
-      const walkKm = (plan.totalWalkingMeters / 1000).toFixed(1);
+      const walkKm = (plan.enteredWalkingMeters / 1000).toFixed(1);
       const targetText =
         plan.targetStraightMeters < 1000
           ? `${Math.round(plan.targetStraightMeters / 50) * 50}m`
           : `${(plan.targetStraightMeters / 1000).toFixed(1)}km`;
 
+      const modeLabel = tripMode === "roundtrip" ? "往復" : "片道";
+
       estimateEl.innerHTML =
-        `<strong>${steps.toLocaleString()}歩</strong> ≒ 約${walkKm}km歩行` +
+        `<strong>${modeLabel} ${steps.toLocaleString()}歩</strong> ≒ 約${walkKm}km歩行` +
         ` ／ 目的地は直線 約${targetText}先が目安`;
     }
 
@@ -755,9 +815,20 @@ out center tags 180;
         estimatedRoundTripMeters / STEP_LENGTH_METERS / 100
       ) * 100;
 
+      const estimatedOneWaySteps = Math.round(estimatedSteps / 2 / 100) * 100;
+      const primaryStepLabel =
+        tripMode === "roundtrip"
+          ? `往復 約${estimatedSteps.toLocaleString()}歩目安`
+          : `片道 約${estimatedOneWaySteps.toLocaleString()}歩目安`;
+      const secondaryStepLabel =
+        tripMode === "roundtrip"
+          ? `片道 約${estimatedOneWaySteps.toLocaleString()}歩`
+          : `往復すると約${estimatedSteps.toLocaleString()}歩`;
+
       metaEl.innerHTML = `
         <span class="chip">${escapeHtml(spot.category)}</span>
-        <span class="chip">往復 約${estimatedSteps.toLocaleString()}歩目安</span>
+        <span class="chip">${primaryStepLabel}</span>
+        <span class="chip">${secondaryStepLabel}</span>
         <span class="chip">直線 約${straightText}</span>
         ${
           spot.fallback
