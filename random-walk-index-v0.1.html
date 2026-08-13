@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#f7f5ef" />
+  <meta name="description" content="歩きたい歩数を決めると、現在地周辺からランダムな散歩先を決めるWebアプリ。" />
+  <title>ランダム散歩 | AI試作所 Prototype 002</title>
+
+  <link rel="preconnect" href="https://unpkg.com" />
+  <link rel="preconnect" href="https://tile.openstreetmap.org" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIINfQ3ynqz9ly0LZB2mI0wRYKZypj4T8LQ="
+    crossorigin=""
+  />
+
+  <style>
+    :root {
+      --bg: #f7f5ef;
+      --card: #fffdf8;
+      --text: #20251f;
+      --muted: #6f746e;
+      --line: #deddd6;
+      --accent: #315c45;
+      --accent-dark: #254737;
+      --soft: #e7efe9;
+      --danger: #9b3d36;
+      --shadow: 0 14px 38px rgba(32, 37, 31, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+    html, body { margin: 0; min-height: 100%; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP",
+        "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    button, input, a { font: inherit; }
+
+    button { -webkit-tap-highlight-color: transparent; }
+
+    .app {
+      width: min(100%, 760px);
+      margin: 0 auto;
+      padding: 22px 16px calc(36px + env(safe-area-inset-bottom));
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .brand-name {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      color: var(--muted);
+    }
+
+    .prototype {
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,.55);
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .hero { padding: 8px 4px 22px; }
+
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: clamp(30px, 8vw, 48px);
+      line-height: 1.15;
+      letter-spacing: -.04em;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .card {
+      margin-bottom: 14px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .step-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .step-btn {
+      min-height: 48px;
+      padding: 12px 6px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      color: var(--text);
+      font-weight: 800;
+      cursor: pointer;
+      transition: transform .12s ease, background .12s ease, color .12s ease;
+    }
+
+    .step-btn:hover { transform: translateY(-1px); }
+
+    .step-btn[aria-pressed="true"] {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .custom-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .step-input-wrap {
+      position: relative;
+    }
+
+    .step-input {
+      width: 100%;
+      min-height: 52px;
+      padding: 0 58px 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      color: var(--text);
+      font-weight: 800;
+      outline: none;
+    }
+
+    .step-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(49,92,69,.1);
+    }
+
+    .step-unit {
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+      pointer-events: none;
+    }
+
+    .estimate {
+      margin: 0 0 15px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--soft);
+      color: var(--accent-dark);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .estimate strong { font-size: 13px; }
+
+    .note {
+      margin: -3px 0 15px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .primary-btn, .secondary-btn, .maps-btn {
+      width: 100%;
+      min-height: 52px;
+      border-radius: 15px;
+      font-weight: 800;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: transform .12s ease, opacity .12s ease, background .12s ease;
+    }
+
+    .primary-btn {
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .primary-btn:hover, .maps-btn:hover { background: var(--accent-dark); }
+
+    .primary-btn:active, .secondary-btn:active, .maps-btn:active {
+      transform: scale(.985);
+    }
+
+    .primary-btn:disabled, .secondary-btn:disabled {
+      opacity: .5;
+      cursor: wait;
+    }
+
+    .status {
+      min-height: 24px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .status.error { color: var(--danger); }
+
+    .result-card { display: none; }
+    .result-card.show { display: block; }
+
+    .result-kicker {
+      margin-bottom: 6px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .08em;
+    }
+
+    .destination {
+      margin: 0;
+      font-size: clamp(24px, 7vw, 34px);
+      line-height: 1.25;
+      letter-spacing: -.02em;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin: 12px 0 16px;
+    }
+
+    .chip {
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--accent-dark);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    #map {
+      width: 100%;
+      height: 310px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 17px;
+      background: #e9e9e4;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1.35fr .9fr;
+      gap: 9px;
+      margin-top: 12px;
+    }
+
+    .maps-btn {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .secondary-btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+    }
+
+    .footnote {
+      margin: 18px 6px 0;
+      color: var(--muted);
+      font-size: 11px;
+      text-align: center;
+    }
+
+    .leaflet-control-attribution { font-size: 9px; }
+
+    @media (max-width: 480px) {
+      .app { padding-top: 16px; }
+
+      .card {
+        padding: 15px;
+        border-radius: 19px;
+      }
+
+      .step-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      #map { height: 270px; }
+
+      .actions { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      * { transition: none !important; }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="app">
+    <div class="brand">
+      <p class="brand-name">AI試作所</p>
+      <span class="prototype">Prototype 002 / Ver.0.1</span>
+    </div>
+
+    <section class="hero">
+      <h1>ランダム散歩 🚶</h1>
+      <p>歩きたい歩数だけ決めて、行き先はアプリに任せる。</p>
+    </section>
+
+    <section class="card" aria-labelledby="step-title">
+      <span id="step-title" class="label">今日どのくらい歩く？</span>
+
+      <div class="step-grid" role="group" aria-label="歩きたい歩数">
+        <button class="step-btn" data-steps="2000" aria-pressed="false">2,000歩</button>
+        <button class="step-btn" data-steps="5000" aria-pressed="true">5,000歩</button>
+        <button class="step-btn" data-steps="8000" aria-pressed="false">8,000歩</button>
+        <button class="step-btn" data-steps="10000" aria-pressed="false">10,000歩</button>
+      </div>
+
+      <span class="label">または自由に入力</span>
+      <div class="custom-row">
+        <div class="step-input-wrap">
+          <input
+            id="stepInput"
+            class="step-input"
+            type="number"
+            inputmode="numeric"
+            min="500"
+            max="30000"
+            step="100"
+            value="5000"
+            aria-label="歩きたい歩数"
+          />
+          <span class="step-unit">歩</span>
+        </div>
+      </div>
+
+      <p id="estimate" class="estimate"></p>
+
+      <p class="note">
+        ※ 歩幅を約70cmとして概算します。目的地は「往復で指定歩数に近づく」よう、直線距離から探します。
+      </p>
+
+      <button id="drawBtn" class="primary-btn">🎲 散歩先を決める</button>
+      <div id="status" class="status" aria-live="polite"></div>
+    </section>
+
+    <section id="resultCard" class="card result-card" aria-live="polite">
+      <div class="result-kicker">今日の散歩先</div>
+      <h2 id="destination" class="destination"></h2>
+
+      <div id="meta" class="meta"></div>
+
+      <div id="map" aria-label="現在地と散歩先の地図"></div>
+
+      <div class="actions">
+        <a
+          id="mapsLink"
+          class="maps-btn"
+          href="#"
+          target="_blank"
+          rel="noopener noreferrer"
+        >🗺️ Google Mapsで歩く</a>
+
+        <button id="retryBtn" class="secondary-btn">↻ 引き直す</button>
+      </div>
+    </section>
+
+    <p class="footnote">
+      位置情報は散歩先の抽選にのみ利用し、このアプリでは保存しません。<br />
+      地図 © OpenStreetMap contributors
+    </p>
+  </main>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <script>
+    const STEP_LENGTH_METERS = 0.70;
+    const ROUTE_FACTOR = 1.20;
+    const MIN_STEPS = 500;
+    const MAX_STEPS = 30000;
+
+    const stepButtons = [...document.querySelectorAll(".step-btn")];
+    const stepInput = document.getElementById("stepInput");
+    const estimateEl = document.getElementById("estimate");
+    const drawBtn = document.getElementById("drawBtn");
+    const retryBtn = document.getElementById("retryBtn");
+    const statusEl = document.getElementById("status");
+    const resultCard = document.getElementById("resultCard");
+    const destinationEl = document.getElementById("destination");
+    const metaEl = document.getElementById("meta");
+    const mapsLink = document.getElementById("mapsLink");
+
+    let selectedSteps = 5000;
+    let currentPosition = null;
+    let map = null;
+    let currentMarker = null;
+    let destinationMarker = null;
+    let guideLine = null;
+    let lastPickedKey = null;
+
+    const OVERPASS_ENDPOINTS = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.kumi.systems/api/interpreter"
+    ];
+
+    stepButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedSteps = Number(btn.dataset.steps);
+        stepInput.value = selectedSteps;
+        syncPresetState();
+        updateEstimate();
+      });
+    });
+
+    stepInput.addEventListener("input", () => {
+      const value = Number(stepInput.value);
+      if (Number.isFinite(value) && value > 0) {
+        selectedSteps = value;
+      }
+      syncPresetState();
+      updateEstimate();
+    });
+
+    stepInput.addEventListener("blur", () => {
+      selectedSteps = normalizeSteps(stepInput.value);
+      stepInput.value = selectedSteps;
+      syncPresetState();
+      updateEstimate();
+    });
+
+    drawBtn.addEventListener("click", drawDestination);
+    retryBtn.addEventListener("click", drawDestination);
+
+    updateEstimate();
+
+    function normalizeSteps(value) {
+      const parsed = Math.round(Number(value) / 100) * 100;
+      if (!Number.isFinite(parsed)) return 5000;
+      return Math.min(MAX_STEPS, Math.max(MIN_STEPS, parsed));
+    }
+
+    function syncPresetState() {
+      stepButtons.forEach((button) => {
+        const isSelected = Number(button.dataset.steps) === Number(selectedSteps);
+        button.setAttribute("aria-pressed", isSelected ? "true" : "false");
+      });
+    }
+
+    function calculateWalkingPlan(steps) {
+      const totalWalkingMeters = steps * STEP_LENGTH_METERS;
+      const oneWayRouteMeters = totalWalkingMeters / 2;
+      const targetStraightMeters = oneWayRouteMeters / ROUTE_FACTOR;
+
+      return {
+        steps,
+        totalWalkingMeters,
+        oneWayRouteMeters,
+        targetStraightMeters
+      };
+    }
+
+    function updateEstimate() {
+      const steps = normalizeSteps(stepInput.value || selectedSteps);
+      const plan = calculateWalkingPlan(steps);
+
+      const walkKm = (plan.totalWalkingMeters / 1000).toFixed(1);
+      const targetText =
+        plan.targetStraightMeters < 1000
+          ? `${Math.round(plan.targetStraightMeters / 50) * 50}m`
+          : `${(plan.targetStraightMeters / 1000).toFixed(1)}km`;
+
+      estimateEl.innerHTML =
+        `<strong>${steps.toLocaleString()}歩</strong> ≒ 約${walkKm}km歩行` +
+        ` ／ 目的地は直線 約${targetText}先が目安`;
+    }
+
+    async function drawDestination() {
+      selectedSteps = normalizeSteps(stepInput.value);
+      stepInput.value = selectedSteps;
+      syncPresetState();
+      updateEstimate();
+
+      setLoading(true, "現在地を確認しています…");
+
+      try {
+        currentPosition = await getCurrentPosition();
+
+        const plan = calculateWalkingPlan(selectedSteps);
+
+        setStatus("近くの散歩スポットを探しています…");
+
+        const spots = await fetchSpots(
+          currentPosition.lat,
+          currentPosition.lon,
+          plan.targetStraightMeters
+        );
+
+        const picked = pickSpot(
+          spots,
+          currentPosition.lat,
+          currentPosition.lon,
+          plan.targetStraightMeters
+        );
+
+        showResult(picked, plan);
+        setStatus("");
+      } catch (error) {
+        console.error(error);
+        setStatus(
+          error.message ||
+            "うまく取得できませんでした。もう一度お試しください。",
+          true
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function getCurrentPosition() {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("この端末では位置情報を利用できません。"));
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            resolve({
+              lat: pos.coords.latitude,
+              lon: pos.coords.longitude
+            });
+          },
+          (err) => {
+            if (err.code === 1) {
+              reject(
+                new Error(
+                  "位置情報の利用を許可すると散歩先を探せます。ブラウザの位置情報設定をご確認ください。"
+                )
+              );
+              return;
+            }
+
+            reject(
+              new Error(
+                "現在地を取得できませんでした。電波状況のよい場所で再度お試しください。"
+              )
+            );
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 12000,
+            maximumAge: 60000
+          }
+        );
+      });
+    }
+
+    async function fetchSpots(lat, lon, targetDistance) {
+      const radius = Math.max(700, Math.round(targetDistance * 1.35));
+
+      const query = `
+[out:json][timeout:14];
+(
+  nwr(around:${radius},${lat},${lon})["name"]["leisure"~"park|garden"];
+  nwr(around:${radius},${lat},${lon})["name"]["tourism"~"attraction|viewpoint|museum|gallery"];
+  nwr(around:${radius},${lat},${lon})["name"]["amenity"~"cafe|library|place_of_worship"];
+  nwr(around:${radius},${lat},${lon})["name"]["shop"~"books|convenience"];
+);
+out center tags 180;
+      `.trim();
+
+      for (const endpoint of OVERPASS_ENDPOINTS) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 16000);
+
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+            },
+            body: "data=" + encodeURIComponent(query),
+            signal: controller.signal
+          });
+
+          clearTimeout(timer);
+
+          if (!response.ok) {
+            throw new Error(`Overpass API error: ${response.status}`);
+          }
+
+          const data = await response.json();
+          return normalizeSpots(data.elements || []);
+        } catch (error) {
+          console.warn("Overpass endpoint failed:", endpoint, error);
+        }
+      }
+
+      return [];
+    }
+
+    function normalizeSpots(elements) {
+      const seen = new Set();
+      const spots = [];
+
+      for (const el of elements) {
+        const lat = el.lat ?? el.center?.lat;
+        const lon = el.lon ?? el.center?.lon;
+        const name = el.tags?.name;
+
+        if (!lat || !lon || !name) continue;
+
+        const key = `${name}|${lat.toFixed(5)}|${lon.toFixed(5)}`;
+        if (seen.has(key)) continue;
+
+        seen.add(key);
+
+        spots.push({
+          key,
+          name,
+          lat,
+          lon,
+          category: categoryLabel(el.tags || {})
+        });
+      }
+
+      return spots;
+    }
+
+    function categoryLabel(tags) {
+      if (tags.leisure === "park") return "🌳 公園";
+      if (tags.leisure === "garden") return "🌿 庭園";
+      if (tags.amenity === "cafe") return "☕ カフェ";
+      if (tags.amenity === "library") return "📚 図書館";
+      if (tags.amenity === "place_of_worship") return "⛩️ 寺社・礼拝所";
+      if (tags.shop === "books") return "📖 本屋";
+      if (tags.shop === "convenience") return "🏪 コンビニ";
+      if (tags.tourism === "viewpoint") return "👀 展望スポット";
+      if (tags.tourism === "museum") return "🏛️ ミュージアム";
+      if (tags.tourism === "gallery") return "🖼️ ギャラリー";
+      return "📍 スポット";
+    }
+
+    function pickSpot(spots, lat, lon, targetDistance) {
+      const withDistance = spots.map((spot) => ({
+        ...spot,
+        distance: haversine(lat, lon, spot.lat, spot.lon)
+      }));
+
+      let candidates = withDistance.filter(
+        (spot) =>
+          spot.distance >= targetDistance * 0.55 &&
+          spot.distance <= targetDistance * 1.18 &&
+          spot.key !== lastPickedKey
+      );
+
+      if (!candidates.length) {
+        candidates = withDistance.filter(
+          (spot) =>
+            spot.distance >= Math.max(150, targetDistance * 0.3) &&
+            spot.distance <= targetDistance * 1.4 &&
+            spot.key !== lastPickedKey
+        );
+      }
+
+      if (candidates.length) {
+        const picked =
+          candidates[Math.floor(Math.random() * candidates.length)];
+
+        lastPickedKey = picked.key;
+
+        return {
+          ...picked,
+          fallback: false
+        };
+      }
+
+      const randomDistance =
+        targetDistance * (0.82 + Math.random() * 0.22);
+
+      const point = randomPointAtDistance(
+        lat,
+        lon,
+        randomDistance
+      );
+
+      lastPickedKey = null;
+
+      return {
+        name: "ランダム地点",
+        category: "🎯 行き先ガチャ",
+        lat: point.lat,
+        lon: point.lon,
+        distance: haversine(lat, lon, point.lat, point.lon),
+        fallback: true
+      };
+    }
+
+    function showResult(spot, plan) {
+      destinationEl.textContent = spot.name;
+
+      const straightText =
+        spot.distance < 1000
+          ? `${Math.round(spot.distance / 10) * 10}m`
+          : `${(spot.distance / 1000).toFixed(1)}km`;
+
+      const estimatedRoundTripMeters = spot.distance * 2 * ROUTE_FACTOR;
+      const estimatedSteps = Math.round(
+        estimatedRoundTripMeters / STEP_LENGTH_METERS / 100
+      ) * 100;
+
+      metaEl.innerHTML = `
+        <span class="chip">${escapeHtml(spot.category)}</span>
+        <span class="chip">往復 約${estimatedSteps.toLocaleString()}歩目安</span>
+        <span class="chip">直線 約${straightText}</span>
+        ${
+          spot.fallback
+            ? '<span class="chip">周辺候補が少ないためランダム地点</span>'
+            : ""
+        }
+      `;
+
+      const origin = `${currentPosition.lat},${currentPosition.lon}`;
+      const destination = `${spot.lat},${spot.lon}`;
+
+      mapsLink.href =
+        `https://www.google.com/maps/dir/?api=1` +
+        `&origin=${encodeURIComponent(origin)}` +
+        `&destination=${encodeURIComponent(destination)}` +
+        `&travelmode=walking`;
+
+      renderMap(currentPosition, spot);
+
+      resultCard.classList.add("show");
+
+      requestAnimationFrame(() => {
+        resultCard.scrollIntoView({
+          behavior: "smooth",
+          block: "start"
+        });
+
+        setTimeout(() => {
+          map?.invalidateSize();
+        }, 250);
+      });
+    }
+
+    function renderMap(origin, spot) {
+      if (!map) {
+        map = L.map("map", {
+          zoomControl: true
+        });
+
+        L.tileLayer(
+          "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          {
+            maxZoom: 19,
+            attribution:
+              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          }
+        ).addTo(map);
+      }
+
+      if (currentMarker) currentMarker.remove();
+      if (destinationMarker) destinationMarker.remove();
+      if (guideLine) guideLine.remove();
+
+      currentMarker = L.circleMarker(
+        [origin.lat, origin.lon],
+        {
+          radius: 8,
+          weight: 3,
+          fillOpacity: .9
+        }
+      )
+        .addTo(map)
+        .bindPopup("現在地");
+
+      destinationMarker = L.marker([spot.lat, spot.lon])
+        .addTo(map)
+        .bindPopup(escapeHtml(spot.name))
+        .openPopup();
+
+      guideLine = L.polyline(
+        [
+          [origin.lat, origin.lon],
+          [spot.lat, spot.lon]
+        ],
+        {
+          weight: 3,
+          opacity: .65,
+          dashArray: "7 8"
+        }
+      ).addTo(map);
+
+      map.fitBounds(guideLine.getBounds().pad(.22), {
+        maxZoom: 16
+      });
+    }
+
+    function randomPointAtDistance(lat, lon, distanceMeters) {
+      const earthRadius = 6371000;
+      const bearing = Math.random() * Math.PI * 2;
+      const angularDistance = distanceMeters / earthRadius;
+
+      const lat1 = toRad(lat);
+      const lon1 = toRad(lon);
+
+      const lat2 = Math.asin(
+        Math.sin(lat1) * Math.cos(angularDistance) +
+          Math.cos(lat1) *
+            Math.sin(angularDistance) *
+            Math.cos(bearing)
+      );
+
+      const lon2 =
+        lon1 +
+        Math.atan2(
+          Math.sin(bearing) *
+            Math.sin(angularDistance) *
+            Math.cos(lat1),
+          Math.cos(angularDistance) -
+            Math.sin(lat1) * Math.sin(lat2)
+        );
+
+      return {
+        lat: toDeg(lat2),
+        lon: toDeg(lon2)
+      };
+    }
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      const earthRadius = 6371000;
+
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) *
+          Math.cos(toRad(lat2)) *
+          Math.sin(dLon / 2) ** 2;
+
+      return (
+        2 *
+        earthRadius *
+        Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+      );
+    }
+
+    function toRad(value) {
+      return value * Math.PI / 180;
+    }
+
+    function toDeg(value) {
+      return value * 180 / Math.PI;
+    }
+
+    function setLoading(isLoading, text = "") {
+      drawBtn.disabled = isLoading;
+      retryBtn.disabled = isLoading;
+
+      drawBtn.textContent = isLoading
+        ? "探しています…"
+        : "🎲 散歩先を決める";
+
+      if (text) {
+        setStatus(text);
+      }
+    }
+
+    function setStatus(text, isError = false) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle("error", isError);
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(
+        /[&<>'"]/g,
+        (char) =>
+          ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            "'": "&#39;",
+            '"': "&quot;"
+          }[char])
+      );
+    }
+  </script>
+</body>
+</html>
