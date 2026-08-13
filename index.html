@@ -178,6 +178,43 @@
       pointer-events: none;
     }
 
+    .trip-mode {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .trip-btn {
+      min-height: 50px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      color: var(--text);
+      font-weight: 800;
+      cursor: pointer;
+      transition: transform .12s ease, background .12s ease, color .12s ease;
+    }
+
+    .trip-btn small {
+      display: block;
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .trip-btn[aria-pressed="true"] {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .trip-btn[aria-pressed="true"] small {
+      color: rgba(255,255,255,.78);
+    }
+
     .estimate {
       margin: 0 0 15px;
       padding: 10px 12px;
@@ -372,10 +409,22 @@
         </div>
       </div>
 
+      <span class="label">歩数の数え方</span>
+      <div class="trip-mode" role="group" aria-label="往復または片道">
+        <button class="trip-btn" data-mode="roundtrip" aria-pressed="true">
+          往復
+          <small>帰ってくるまで</small>
+        </button>
+        <button class="trip-btn" data-mode="oneway" aria-pressed="false">
+          片道
+          <small>目的地まで</small>
+        </button>
+      </div>
+
       <p id="estimate" class="estimate"></p>
 
       <p class="note">
-        ※ 歩幅を約70cmとして概算します。目的地は「往復で指定歩数に近づく」よう、直線距離から探します。
+        ※ 歩幅を約70cmとして概算します。実際の歩数は歩幅や道路の形で前後します。
       </p>
 
       <button id="drawBtn" class="primary-btn">🎲 散歩先を決める</button>
@@ -422,6 +471,7 @@
     const MAX_STEPS = 30000;
 
     const stepButtons = [...document.querySelectorAll(".step-btn")];
+    const tripButtons = [...document.querySelectorAll(".trip-btn")];
     const stepInput = document.getElementById("stepInput");
     const estimateEl = document.getElementById("estimate");
     const drawBtn = document.getElementById("drawBtn");
@@ -433,6 +483,7 @@
     const mapsLink = document.getElementById("mapsLink");
 
     let selectedSteps = 5000;
+    let tripMode = "roundtrip";
     let currentPosition = null;
     let map = null;
     let currentMarker = null;
@@ -450,6 +501,14 @@
         selectedSteps = Number(btn.dataset.steps);
         stepInput.value = selectedSteps;
         syncPresetState();
+        updateEstimate();
+      });
+    });
+
+    tripButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        tripMode = btn.dataset.mode;
+        syncTripModeState();
         updateEstimate();
       });
     });
@@ -473,6 +532,7 @@
     drawBtn.addEventListener("click", drawDestination);
     retryBtn.addEventListener("click", drawDestination);
 
+    syncTripModeState();
     updateEstimate();
 
     function normalizeSteps(value) {
@@ -488,16 +548,29 @@
       });
     }
 
+    function syncTripModeState() {
+      tripButtons.forEach((button) => {
+        const isSelected = button.dataset.mode === tripMode;
+        button.setAttribute("aria-pressed", isSelected ? "true" : "false");
+      });
+    }
+
     function calculateWalkingPlan(steps) {
-      const totalWalkingMeters = steps * STEP_LENGTH_METERS;
-      const oneWayRouteMeters = totalWalkingMeters / 2;
-      const targetStraightMeters = oneWayRouteMeters / ROUTE_FACTOR;
+      const selectedWalkingMeters = steps * STEP_LENGTH_METERS;
+      const routeMetersToDestination =
+        tripMode === "roundtrip"
+          ? selectedWalkingMeters / 2
+          : selectedWalkingMeters;
+
+      const targetStraightMeters =
+        routeMetersToDestination / ROUTE_FACTOR;
 
       return {
         steps,
-        totalWalkingMeters,
-        oneWayRouteMeters,
-        targetStraightMeters
+        selectedWalkingMeters,
+        routeMetersToDestination,
+        targetStraightMeters,
+        mode: tripMode
       };
     }
 
@@ -505,14 +578,16 @@
       const steps = normalizeSteps(stepInput.value || selectedSteps);
       const plan = calculateWalkingPlan(steps);
 
-      const walkKm = (plan.totalWalkingMeters / 1000).toFixed(1);
+      const walkKm = (plan.selectedWalkingMeters / 1000).toFixed(1);
       const targetText =
         plan.targetStraightMeters < 1000
           ? `${Math.round(plan.targetStraightMeters / 50) * 50}m`
           : `${(plan.targetStraightMeters / 1000).toFixed(1)}km`;
 
+      const modeLabel = plan.mode === "roundtrip" ? "往復" : "片道";
+
       estimateEl.innerHTML =
-        `<strong>${steps.toLocaleString()}歩</strong> ≒ 約${walkKm}km歩行` +
+        `<strong>${steps.toLocaleString()}歩（${modeLabel}）</strong> ≒ 約${walkKm}km歩行` +
         ` ／ 目的地は直線 約${targetText}先が目安`;
     }
 
@@ -746,14 +821,17 @@ out center tags 180;
           ? `${Math.round(spot.distance / 10) * 10}m`
           : `${(spot.distance / 1000).toFixed(1)}km`;
 
-      const estimatedRoundTripMeters = spot.distance * 2 * ROUTE_FACTOR;
+      const routeMultiplier = plan.mode === "roundtrip" ? 2 : 1;
+      const estimatedWalkingMeters =
+        spot.distance * routeMultiplier * ROUTE_FACTOR;
       const estimatedSteps = Math.round(
-        estimatedRoundTripMeters / STEP_LENGTH_METERS / 100
+        estimatedWalkingMeters / STEP_LENGTH_METERS / 100
       ) * 100;
+      const modeLabel = plan.mode === "roundtrip" ? "往復" : "片道";
 
       metaEl.innerHTML = `
         <span class="chip">${escapeHtml(spot.category)}</span>
-        <span class="chip">往復 約${estimatedSteps.toLocaleString()}歩目安</span>
+        <span class="chip">${modeLabel} 約${estimatedSteps.toLocaleString()}歩目安</span>
         <span class="chip">直線 約${straightText}</span>
         ${
           spot.fallback
@@ -771,19 +849,26 @@ out center tags 180;
         `&destination=${encodeURIComponent(destination)}` +
         `&travelmode=walking`;
 
-      renderMap(currentPosition, spot);
-
+      // Leafletは非表示要素の中で初期化するとサイズ計算に失敗するため、
+      // 先に結果カードを表示してから地図を描画する。
       resultCard.classList.add("show");
 
       requestAnimationFrame(() => {
+        renderMap(currentPosition, spot);
+
         resultCard.scrollIntoView({
           behavior: "smooth",
           block: "start"
         });
 
         setTimeout(() => {
-          map?.invalidateSize();
-        }, 250);
+          if (map && guideLine) {
+            map.invalidateSize();
+            map.fitBounds(guideLine.getBounds().pad(.22), {
+              maxZoom: 16
+            });
+          }
+        }, 200);
       });
     }
 
