@@ -7,15 +7,6 @@
   <meta name="description" content="歩きたい歩数を決めると、現在地周辺からランダムな散歩先を決めるWebアプリ。" />
   <title>ランダム散歩 | AI試作所 Prototype 002</title>
 
-  <link rel="preconnect" href="https://unpkg.com" />
-  <link rel="preconnect" href="https://tile.openstreetmap.org" />
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIINfQ3ynqz9ly0LZB2mI0wRYKZypj4T8LQ="
-    crossorigin=""
-  />
-
   <style>
     :root {
       --bg: #f7f5ef;
@@ -271,13 +262,34 @@
       font-weight: 700;
     }
 
-    #map {
-      width: 100%;
-      height: 360px;
-      overflow: hidden;
+
+    .spot-info {
+      margin: 14px 0 4px;
+      padding: 16px;
       border: 1px solid var(--line);
-      border-radius: 17px;
-      background: #e9e9e4;
+      border-radius: 16px;
+      background: #fff;
+    }
+
+    .spot-info-title {
+      margin: 0 0 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .04em;
+    }
+
+    .spot-description {
+      margin: 0;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    .spot-sub {
+      margin: 9px 0 0;
+      color: var(--muted);
+      font-size: 12px;
     }
 
     .actions {
@@ -306,7 +318,6 @@
       text-align: center;
     }
 
-    .leaflet-control-attribution { font-size: 9px; }
 
     @media (max-width: 480px) {
       .app { padding-top: 16px; }
@@ -319,11 +330,6 @@
       .step-grid {
         grid-template-columns: repeat(2, 1fr);
       }
-
-      #map { height: 340px; }
-
-      .actions { grid-template-columns: 1fr; }
-    }
 
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
@@ -388,7 +394,11 @@
 
       <div id="meta" class="meta"></div>
 
-      <div id="map" aria-label="現在地と散歩先の地図"></div>
+      <div class="spot-info">
+        <p class="spot-info-title">このスポットについて</p>
+        <p id="spotDescription" class="spot-description"></p>
+        <p id="spotSub" class="spot-sub"></p>
+      </div>
 
       <div class="actions">
         <a
@@ -397,7 +407,7 @@
           href="#"
           target="_blank"
           rel="noopener noreferrer"
-        >🗺️ Google Mapsで歩く</a>
+        >🗺️ Google Mapsで詳細・ルートを見る</a>
 
         <button id="retryBtn" class="secondary-btn">↻ 引き直す</button>
       </div>
@@ -405,15 +415,9 @@
 
     <p class="footnote">
       位置情報は散歩先の抽選にのみ利用し、このアプリでは保存しません。<br />
-      地図 © OpenStreetMap contributors
+      スポット情報 © OpenStreetMap contributors
     </p>
   </main>
-
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""
-  ></script>
 
   <script>
     const STEP_LENGTH_METERS = 0.70;
@@ -430,15 +434,12 @@
     const resultCard = document.getElementById("resultCard");
     const destinationEl = document.getElementById("destination");
     const metaEl = document.getElementById("meta");
+    const spotDescriptionEl = document.getElementById("spotDescription");
+    const spotSubEl = document.getElementById("spotSub");
     const mapsLink = document.getElementById("mapsLink");
 
     let selectedSteps = 5000;
     let currentPosition = null;
-    let map = null;
-    let currentMarker = null;
-    let destinationMarker = null;
-    let guideLine = null;
-    let mapResizeObserver = null;
     let lastPickedKey = null;
 
     const OVERPASS_ENDPOINTS = [
@@ -663,7 +664,8 @@ out center tags 180;
           name,
           lat,
           lon,
-          category: categoryLabel(el.tags || {})
+          category: categoryLabel(el.tags || {}),
+          tags: el.tags || {}
         });
       }
 
@@ -735,7 +737,8 @@ out center tags 180;
         lat: point.lat,
         lon: point.lon,
         distance: haversine(lat, lon, point.lat, point.lon),
-        fallback: true
+        fallback: true,
+        tags: {}
       };
     }
 
@@ -763,6 +766,15 @@ out center tags 180;
         }
       `;
 
+      spotDescriptionEl.textContent = buildSpotDescription(spot);
+
+      const subParts = [];
+      const address = buildAddress(spot.tags || {});
+      if (address) subParts.push(address);
+      if (spot.tags?.opening_hours) subParts.push(`営業時間: ${spot.tags.opening_hours}`);
+      spotSubEl.textContent = subParts.join(" ／ ");
+      spotSubEl.style.display = subParts.length ? "block" : "none";
+
       const origin = `${currentPosition.lat},${currentPosition.lon}`;
       const destination = `${spot.lat},${spot.lon}`;
 
@@ -772,8 +784,6 @@ out center tags 180;
         `&destination=${encodeURIComponent(destination)}` +
         `&travelmode=walking`;
 
-      // Leafletは非表示要素やレイアウト確定前に初期化すると
-      // タイルが一部しか描画されないことがあるため、表示後に少し待って描画する。
       resultCard.classList.add("show");
 
       requestAnimationFrame(() => {
@@ -781,93 +791,68 @@ out center tags 180;
           behavior: "smooth",
           block: "start"
         });
-
-        setTimeout(() => {
-          renderMap(currentPosition, spot);
-          refreshMapSize();
-        }, 80);
-
-        setTimeout(() => {
-          refreshMapSize();
-        }, 350);
       });
     }
 
-    function renderMap(origin, spot) {
-      if (!map) {
-        map = L.map("map", {
-          zoomControl: true
-        });
+    function buildSpotDescription(spot) {
+      const tags = spot.tags || {};
 
-        L.tileLayer(
-          "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          {
-            maxZoom: 19,
-            attribution:
-              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          }
-        ).addTo(map);
-
-        // スマホで表示領域が変わったときも地図を全面描画し直す。
-        if ("ResizeObserver" in window) {
-          mapResizeObserver = new ResizeObserver(() => {
-            if (map) {
-              map.invalidateSize({ pan: false });
-            }
-          });
-          mapResizeObserver.observe(document.getElementById("map"));
-        }
+      if (tags.description) {
+        return tags.description;
       }
 
-      if (currentMarker) currentMarker.remove();
-      if (destinationMarker) destinationMarker.remove();
-      if (guideLine) guideLine.remove();
+      if (tags.note) {
+        return tags.note;
+      }
 
-      currentMarker = L.circleMarker(
-        [origin.lat, origin.lon],
-        {
-          radius: 8,
-          weight: 3,
-          fillOpacity: .9
-        }
-      )
-        .addTo(map)
-        .bindPopup("現在地");
+      if (tags.leisure === "park") {
+        return "散歩の折り返し地点にしやすい公園です。少し休んだり、周辺を歩いてみる目的地に。";
+      }
+      if (tags.leisure === "garden") {
+        return "緑を楽しめる庭園・ガーデン系のスポットです。いつもの道を外れて歩くきっかけに。";
+      }
+      if (tags.amenity === "cafe") {
+        return "散歩途中の休憩候補になるカフェです。到着したら一息つくのもあり。";
+      }
+      if (tags.amenity === "library") {
+        return "図書館です。本や地域情報を眺めてから帰る散歩コースにも向いています。";
+      }
+      if (tags.amenity === "place_of_worship") {
+        return "寺社・礼拝所のスポットです。静かな場所を目的地にして歩きたい日に。";
+      }
+      if (tags.shop === "books") {
+        return "本屋です。散歩ついでに気になる本を1冊探してみるのもよさそうです。";
+      }
+      if (tags.shop === "convenience") {
+        return "コンビニです。目的地として立ち寄り、飲み物などを買って戻る散歩に。";
+      }
+      if (tags.tourism === "viewpoint") {
+        return "景色を楽しめるビュースポットです。歩いた先で少し景色を眺める目的地に。";
+      }
+      if (tags.tourism === "museum") {
+        return "ミュージアム系のスポットです。散歩だけで終わらず、寄り道も楽しめます。";
+      }
+      if (tags.tourism === "gallery") {
+        return "ギャラリー系のスポットです。散歩の途中で作品を見る寄り道候補に。";
+      }
+      if (spot.fallback) {
+        return "周辺にちょうどよい登録スポットが少なかったため、指定歩数に近い方向のランダム地点を選びました。";
+      }
 
-      destinationMarker = L.marker([spot.lat, spot.lon])
-        .addTo(map)
-        .bindPopup(escapeHtml(spot.name))
-        .openPopup();
-
-      guideLine = L.polyline(
-        [
-          [origin.lat, origin.lon],
-          [spot.lat, spot.lon]
-        ],
-        {
-          weight: 3,
-          opacity: .65,
-          dashArray: "7 8"
-        }
-      ).addTo(map);
-
-      map.fitBounds(guideLine.getBounds().pad(.12), {
-        maxZoom: 17,
-        padding: [28, 28]
-      });
+      return "いつもと違う方向へ歩くための、今日のランダム目的地です。";
     }
 
-    function refreshMapSize() {
-      if (!map) return;
+    function buildAddress(tags) {
+      const parts = [
+        tags["addr:province"],
+        tags["addr:city"],
+        tags["addr:suburb"],
+        tags["addr:quarter"],
+        tags["addr:street"],
+        tags["addr:housenumber"]
+      ].filter(Boolean);
 
-      map.invalidateSize({ pan: false });
-
-      if (guideLine) {
-        map.fitBounds(guideLine.getBounds().pad(.12), {
-          maxZoom: 17,
-          padding: [28, 28]
-        });
-      }
+      return parts.join("");
     }
 
     function randomPointAtDistance(lat, lon, distanceMeters) {
